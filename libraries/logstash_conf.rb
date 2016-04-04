@@ -1,52 +1,39 @@
-# Copied from https://github.com/lusis/chef-logstash
-
+# Encoding: utf-8
+# rubocop:disable RedundantReturn
 require 'rubygems'
 
+# Evaluate objects for logstash config file.
 class Erubis::RubyEvaluator::LogstashConf
-  def self.section_to_str(section, version=nil, patterns_dir=nil)
-    result = []
-    patterns_dir_plugins = [ 'grok' ]
-    unless version.nil?
-      patterns_dir_plugins << 'multiline' if Gem::Version.new(version) >= Gem::Version.new('1.1.2')
-    end
-    section.each do |output|
-      output.each do |name, hash|
-        result << ''
-        result << '  ' + name.to_s + ' {'
-        if patterns_dir_plugins.include?(name.to_s) and not patterns_dir.nil? and not hash.has_key?('patterns_dir')
-          result << '    ' + key_value_to_str('patterns_dir', patterns_dir)
-        end
-        hash.sort.each do |k,v|
-          result << '    ' + key_value_to_str(k, v)
-        end
-        result << '  }'
-      end
-    end
-    return result.join("\n")
-  end
-
-  private
-
   def self.key_to_str(k)
     case k.class.to_s
-    when "String"
+    when 'String'
       return "'#{k}'"
-    when "Fixnum", "Float"
+    when 'Fixnum', 'Float'
       return k.to_s
-    when "Regex"
+    when 'Regex'
       return k.inspect
     end
     return k
   end
 
-  def self.value_to_str(v)
+  def self.hash_to_str(h, indent = 0)
+    result = []
+    h.each do |k, v|
+      indent += 4
+      result << indent(indent) + key_value_to_str(k, v, indent)
+      indent -= 4
+    end
+    result.join("\n")
+  end
+
+  def self.value_to_str(v, indent = 0)
     case v
     when String, Symbol, Fixnum, Float
-      "'#{v}'"
+      "\"#{v}\""
     when Array
-      "[#{v.map{|e| value_to_str e}.join(", ")}]"
+      "[#{v.map { |e| value_to_str(e, indent) }.join(', ')}]"
     when Hash, Mash
-      value_to_str(v.to_a.flatten)
+      "{\n" + hash_to_str(v, indent) + "\n" + indent(indent) + '}'
     when TrueClass, FalseClass
       v.to_s
     else
@@ -54,11 +41,56 @@ class Erubis::RubyEvaluator::LogstashConf
     end
   end
 
-  def self.key_value_to_str(k, v)
-    unless v.nil?
-      key_to_str(k) + " => " + value_to_str(v)
-    else
+  def self.key_value_to_str(k, v, indent = 0)
+    if v.nil?
       key_to_str(k)
+    else
+      # k.inspect + " => " + v.inspect
+      key_to_str(k) + ' => ' + value_to_str(v, indent)
     end
   end
+
+  def self.plugin_to_arr(plugin, patterns_dir_plugins = nil, patterns_dir = nil, indent = 0) # , type_to_condition)
+    result = []
+    plugin.each do |name, hash|
+      indent += 4
+      result << indent(indent) + name.to_s + ' {'
+      result << indent(indent) + key_value_to_str('patterns_dir', patterns_dir, indent) if patterns_dir_plugins.include?(name.to_s) && patterns_dir && !hash.key?('patterns_dir')
+      hash.sort.each do |k, v|
+        indent += 4
+        result << indent(indent) + key_value_to_str(k, v, indent)
+        indent -= 4
+      end
+      result << indent(indent) + '}'
+      indent -= 4
+    end
+    return result.join("\n")
+  end
+
+  def self.section_to_str(section, version = nil, patterns_dir = nil, indent = 0)
+    result = []
+    patterns_dir_plugins = ['grok']
+    patterns_dir_plugins << 'multiline' if Gem::Version.new(version) >= Gem::Version.new('1.1.2') unless version.nil?
+    section.each do |segment|
+      result << ''
+      if segment.key?('condition') || segment.key?('block')
+        indent += 4
+        result << indent(indent) + segment['condition'] + ' {' if segment['condition']
+        result << plugin_to_arr(segment['block'], patterns_dir_plugins, patterns_dir, indent)
+        result << indent(indent) + '}' if segment['condition']
+        indent -= 4
+      else
+        indent += 4
+        result << plugin_to_arr(segment, patterns_dir_plugins, patterns_dir, indent) # , type_to_condition)
+        indent -= 4
+      end
+    end
+    return result.join("\n")
+  end
+end
+
+def indent(i)
+  res = ''
+  i.times { res << ' ' }
+  res
 end
